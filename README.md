@@ -11,6 +11,7 @@
 **What:** 
 - Predicting prices, ratings, and/or booking frequencies of Airbnb rental listings in [some subset of] major cities using listing, geospatial, and time series data
 - Airbnb data: http://insideairbnb.com/get-the-data.html 
+
 **Why:** 
 - Improve recommendations made to customers seeking to travel at some point in the future with a given budget (and destination)
 - Help hosts more appropriately price their listings to improve revenue
