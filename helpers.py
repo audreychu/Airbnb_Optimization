@@ -45,7 +45,7 @@ def get_cleaned_foursquare_data(near):
 
 def clean_latlon(df, lon_col, lat_col):
     """Clean lon/lat data for conversion to GeoDataFrame"""
-    p = re.compile(r'^[^\-] + [\d\.]$')
+    p = re.compile(r'[^\-\d\.]')
     df[lon_col] = [p.sub('', x) for x in df[lon_col].astype(str)]
     df[lat_col] = [p.sub('', x) for x in df[lat_col].astype(str)]
 
@@ -54,10 +54,10 @@ def clean_latlon(df, lon_col, lat_col):
 
     return(df.rename(columns = {lon_col: 'longitude', lat_col: 'latitude'}))
 
-def to_geodf(df):
+def to_gdf(df):
     """Add point geometry to a given dataframe using cleaned lon/lat"""
     geometry = [Point(xy) for xy in zip(df.longitude, df.latitude)]
-    gdf = gpd.GeoDataFrame(df, crs={'init': 'epsg:4326'}, geometry = geometry)
+    gdf = gpd.GeoDataFrame(df, crs='epsg:4326', geometry = geometry)
     return(gdf)
 
 def filter_to_neighbourhood(points, neigh, neighbourhoods_gdf):
@@ -67,15 +67,15 @@ def filter_to_neighbourhood(points, neigh, neighbourhoods_gdf):
                      neighbourhoods_gdf.loc[neighbourhoods_gdf.neighbourhood == neigh],
                      how = 'inner', op='intersects'))
 
-def filter_to_radius(point, points, radius):
+def filter_to_radius(geo_listing, points, radius):
     """Filter data to all points (of a given dataframe) that are
-    within a specified radius (in meters) of a given point"""
+    within a specified radius (in meters) of a given listing"""
 
-    point_proj = point.to_crs({'init': 'epsg:32118'})
-    points_proj = points.to_crs({'init': 'epsg:32118'})
+    listing_proj = gpd.GeoDataFrame(geometry = [geo_listing['geometry']], crs = 'epsg:32118')
+    points_proj = points.to_crs('epsg:32118')
 
-    buff = gpd.GeoDataFrame(geometry = [point_proj.buffer(radius).unary_union],
-                            crs = {'init': 'epsg:32118'})
+    buff = gpd.GeoDataFrame(geometry = [listing_proj.buffer(radius).unary_union],
+                            crs = 'epsg:32118')
     selected = gpd.sjoin(points_proj, buff, how = 'inner', op = 'intersects')
 
     return(selected)
@@ -119,7 +119,8 @@ def get_closest_n_points(geo_listing, points, n, radius):
     return(res)
 
 def dist_to_closest(geo_listing, points):
-    """Return the distance (in km) from listing to closest point in provided points dataframe"""
+    """Return the distance (in km) from listing to closest point in provided
+    points dataframe"""
     # Filter to radius to reduce computation:
     rad = filter_to_radius(geo_listing, points, 2000)
 
