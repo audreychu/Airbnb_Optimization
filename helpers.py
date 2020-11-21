@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import numpy as np
 import geopandas as gpd
-import geopy
+from geopy import distance
 from shapely.geometry import Point
 import re
 
@@ -60,14 +60,14 @@ def to_geodf(df):
     gdf = gpd.GeoDataFrame(df, crs={'init': 'epsg:4326'}, geometry = geometry)
     return(gdf)
 
-def filter_neighbourhood(points, neigh, neighbourhoods_gdf):
+def filter_to_neighbourhood(points, neigh, neighbourhoods_gdf):
     """Filter point data by neighborhood (to be used if neighbourhood
     is not already a label in dataframe)"""
     return(gpd.sjoin(points,
                      neighbourhoods_gdf.loc[neighbourhoods_gdf.neighbourhood == neigh],
                      how = 'inner', op='intersects'))
 
-def filter_radius(point, points, radius):
+def filter_to_radius(point, points, radius):
     """Filter data to all points (of a given dataframe) that are
     within a specified radius (in meters) of a given point"""
 
@@ -80,10 +80,51 @@ def filter_radius(point, points, radius):
 
     return(selected)
 
-def idw_popularity(geo_listing, poi_gdf, neighborhood):
+def idw_popularity(geo_listing, poi_gdf, citywide = 0):
     """
     Calculate an index to measure closeness of a given listing to the
     most popular venues in its neighborhood. This is influenced by the
     inverse distance weighting method and intended to be used in a pandas apply
     chain
     """
+    listing_proj = gpd.GeoDataFrame(geometry = [geo_listing['geometry']], crs = 'epsg:4326')
+
+    neighborhood = geo_listing['neighbourhood_cleansed']
+    geom = geo_listing['geometry']
+
+    pois_select = poi_gdf.loc[poi_gdf['neighborhood'] == neighborhood].to_crs('epsg:4326')
+    poi_ranks = pois_select['pop_rank']
+
+    dists_to_listing = [distance.distance((listing_proj.geometry.y[0], listing_proj.geometry.x[0]),
+                        (point.y, point.x)).km for point in pois_select['geometry']]
+    id_pop_weights = [1/(x*y) for x,y in zip(poi_ranks, dists_to_listing)]
+
+    metric = np.sum(id_pop_weights)
+
+    return(metric)
+
+def get_closest_n_points(geo_listing, points, n, radius):
+    """
+    Return the closest n points to a given listing from a points GeoDataFrame
+    """
+    # Filter to radius to reduce computation:
+    rad = filter_to_radius(geo_listing, points, radius)
+
+    listing_proj = gpd.GeoDataFrame(geometry = [geo_listing['geometry'][0]], crs = 'epsg:4326')
+    dists_to_listing = [distance.distance((listing_proj.geometry.y[0], listing_proj.geometry.x[0]),
+                        (point.y, point.x)).km for point in rad['geometry']]
+
+    res = rad.set_index(np.argsort(dists_to_listing), append = True).sort_index(level = 1).reset_index(1, drop = True).iloc[0:n]
+
+    return(res)
+
+def dist_to_closest(geo_listing, points):
+    """Return the distance (in km) from listing to closest point in provided points dataframe"""
+    # Filter to radius to reduce computation:
+    rad = filter_to_radius(geo_listing, points, 2000)
+
+    listing_proj = gpd.GeoDataFrame(geometry = [geo_listing['geometry'][0]], crs = 'epsg:4326')
+    dists_to_listing = [distance.distance((listing_proj.geometry.y[0], listing_proj.geometry.x[0]), (point.y, point.x)).km for point in rad['geometry']]
+
+    min_dist = np.min(dists_to_listing)
+    return(min_dist)
