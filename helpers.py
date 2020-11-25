@@ -23,13 +23,14 @@ params = dict(
     sortByPopularity = 1 # Boolean mask to sort by popularity
 )
 
-def get_cleaned_foursquare_data(near):
+def get_cleaned_foursquare_data(near, categoryId = None):
     """
     Get data from foursquare API for a given location and return relevant
     columns as dataframe with neighborhood label and popularity rank
     """
 
     params['near'] = near
+    params['categoryId'] = categoryId
     response = requests.get(url=url, params=params)
 
     try:
@@ -67,29 +68,34 @@ def filter_to_neighbourhood(points, neigh, neighbourhoods_gdf):
                      neighbourhoods_gdf.loc[neighbourhoods_gdf.neighbourhood == neigh],
                      how = 'inner', op='intersects'))
 
-def filter_to_radius(geo_listing, points, radius):
+def filter_to_radius(geo_listing, points, radius_meters):
     """Filter data to all points (of a given dataframe) that are
     within a specified radius (in meters) of a given listing"""
+    listing_proj = gpd.GeoDataFrame(geometry = [geo_listing['geometry']], crs = 'epsg:4326').to_crs('epsg:32118')
 
-    listing_proj = gpd.GeoDataFrame(geometry = [geo_listing['geometry']], crs = 'epsg:32118')
+    buff = gpd.GeoDataFrame(geometry = [listing_proj.buffer(radius_meters).unary_union], crs = 'epsg:32118')
+
     points_proj = points.to_crs('epsg:32118')
-
-    buff = gpd.GeoDataFrame(geometry = [listing_proj.buffer(radius).unary_union],
-                            crs = 'epsg:32118')
-    selected = gpd.sjoin(points_proj, buff, how = 'inner', op = 'intersects')
-
+    selected = gpd.sjoin(points_proj, buff, how = 'inner', op = 'within') # within much faster than intersects
     return(selected)
 
-def idw_popularity(geo_listing, poi_gdf, citywide = 0):
+def idw_popularity(geo_listing, poi_gdf, citywide = 0, metric = 'sum'):
     """
     Calculate an index to measure closeness of a given listing to the
     most popular venues in its neighborhood. This is influenced by the
     inverse distance weighting method and intended to be used in a pandas apply
     chain
     """
+
     listing_proj = gpd.GeoDataFrame(geometry = [geo_listing['geometry']], crs = 'epsg:4326')
 
-    neighborhood = geo_listing['neighbourhood_cleansed']
+    if citywide == 0:
+        neighborhood = geo_listing['neighbourhood_cleansed']
+        if neighborhood not in poi_gdf.neighborhood.unique():
+            neighborhood = geo_listing['neighbourhood_group_cleansed']
+    else:
+        neighborhood = 'New York City'
+
     geom = geo_listing['geometry']
 
     pois_select = poi_gdf.loc[poi_gdf['neighborhood'] == neighborhood].to_crs('epsg:4326')
@@ -99,9 +105,12 @@ def idw_popularity(geo_listing, poi_gdf, citywide = 0):
                         (point.y, point.x)).km for point in pois_select['geometry']]
     id_pop_weights = [1/(x*y) for x,y in zip(poi_ranks, dists_to_listing)]
 
-    metric = np.sum(id_pop_weights)
+    if metric == 'sum':
+        res = np.sum(id_pop_weights)
+    if metric == 'mean':
+        res = np.mean(id_pop_weights)
 
-    return(metric)
+    return(res)
 
 def get_closest_n_points(geo_listing, points, n, radius):
     """
@@ -121,11 +130,9 @@ def get_closest_n_points(geo_listing, points, n, radius):
 def dist_to_closest(geo_listing, points):
     """Return the distance (in km) from listing to closest point in provided
     points dataframe"""
-    # Filter to radius to reduce computation:
-    rad = filter_to_radius(geo_listing, points, 2000)
 
     listing_proj = gpd.GeoDataFrame(geometry = [geo_listing['geometry'][0]], crs = 'epsg:4326')
-    dists_to_listing = [distance.distance((listing_proj.geometry.y[0], listing_proj.geometry.x[0]), (point.y, point.x)).km for point in rad['geometry']]
+    dists_to_listing = [distance.distance((listing_proj.geometry.y[0], listing_proj.geometry.x[0]), (point.y, point.x)).km for point in points['geometry']]
 
     min_dist = np.min(dists_to_listing)
     return(min_dist)
